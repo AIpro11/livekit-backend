@@ -1,9 +1,16 @@
 {
-  "name": "livekit-backend",
+  "name": "falcon-gpt-agent",
+  "version": "1.0.0",
   "type": "module",
+  "scripts": {
+    "start": "node agent.js",
+    "dev": "node --watch agent.js"
+  },
   "dependencies": {
-    "livekit-server-sdk": "^2.0.0",
-    "express": "^4.19.2",
-    "cors": "^2.8.5"
+    "@livekit/agents": "^1.0.0",
+    "@livekit/agents-plugin-google": "^1.0.0",
+    "@livekit/plugins-ai-coustics": "^1.0.0",
+    "dotenv": "^16.3.1",
+    "livekit-server-sdk": "^2.0.0"
   }
 }
