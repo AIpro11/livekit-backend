@@ -1,0 +1,9 @@
+{
+  "name": "livekit-backend",
+  "type": "module",
+  "dependencies": {
+    "livekit-server-sdk": "^2.0.0",
+    "express": "^4.19.2",
+    "cors": "^2.8.5"
+  }
+}
