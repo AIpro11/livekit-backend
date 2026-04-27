@@ -1,120 +1,186 @@
-// agent.ts
+
 import {
-  type JobContext,
-  ServerOptions,
-  cli,
   defineAgent,
+  cli,
   voice,
+  ServerOptions,
 } from '@livekit/agents';
 
 import * as google from '@livekit/agents-plugin-google';
-import * as aiCoustics from '@livekit/plugins-ai-coustics';
-
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 
-dotenv.config({ path: '.env.local' });
+dotenv.config();
 
 // Store credentials per room
-const roomCredentials = new Map<string, { apiKey: string; apiSecret: string; wsUrl: string }>();
+const roomCredentials = new Map();
 
+// 🚀 Define agent
 export default defineAgent({
-  entry: async (ctx: JobContext) => {
+  entry: async (ctx) => {
     const roomName = ctx.room.name;
-    
-    // Try to get credentials from environment or wait for frontend
-    let credentials = roomCredentials.get(roomName);
-    
-    // 🎤 Create session with Gemini Realtime (using LiveKit Inference - no API key needed!)
-    const session = new voice.AgentSession({
-      llm: new google.realtime.RealtimeModel({
-        model: "gemini-2.0-flash-exp", // Using available model
+
+    console.log(`🚀 Joining room: ${roomName}`);
+
+    // Wait for credentials from frontend before initializing LLM
+    let credentials = null;
+    let llmInstance = null;
+    let session = null;
+
+    // Function to initialize LLM with credentials
+    function initLLM(apiKey, apiSecret, wsUrl) {
+      console.log(`🔑 Initializing LLM with provided credentials for room: ${roomName}`);
+      
+      // For Google Gemini - uses LiveKit Inference, no API key needed in agent
+      // The credentials are used for token generation on the frontend side
+      // The agent itself just needs to know it's connected
+      return new google.realtime.RealtimeModel({
+        model: "gemini-2.0-flash-exp",
         voice: "Puck",
-        apiKey: undefined, // ✅ No API key needed - uses LiveKit Inference
-      }),
-      turnHandling: {
-        interruptions: true, // user can interrupt AI speaking
-      },
-    });
+        apiKey: undefined, // Uses LiveKit Inference automatically
+        temperature: 0.7,
+      });
+    }
 
-    // 🚀 Start agent session
-    await session.start({
-      agent: new MyAgent(),
-      room: ctx.room,
-      inputOptions: {
-        noiseCancellation: aiCoustics.audioEnhancement({
-          model: 'quailVfL',
-        }),
-      },
-    });
-
-    // 🔗 Connect to LiveKit room
-    await ctx.connect();
-
-    console.log(`✅ Agent connected to room: ${roomName}`);
-
-    // 🎧 Listen for frontend messages (credentials and chat)
+    // Listen for credential updates from frontend
     ctx.room.on("dataReceived", async (payload, participant) => {
       try {
         const text = new TextDecoder().decode(payload);
         const data = JSON.parse(text);
-        
+
         // Handle credential update from frontend
         if (data.type === 'credentials') {
-          roomCredentials.set(roomName, {
+          console.log(`🔑 Received credentials from ${participant?.identity} for room: ${roomName}`);
+          
+          credentials = {
             apiKey: data.apiKey,
             apiSecret: data.apiSecret,
             wsUrl: data.wsUrl
-          });
-          console.log(`🔑 Credentials received for room: ${roomName}`);
+          };
           
-          // Send confirmation back
-          const confirmMsg = JSON.stringify({ type: 'credential_status', status: 'received' });
+          roomCredentials.set(roomName, credentials);
+          
+          // Send confirmation back to frontend
+          const confirmMsg = JSON.stringify({ 
+            type: 'credential_status', 
+            status: 'received',
+            message: 'Credentials received successfully'
+          });
           await ctx.room.localParticipant.publishData(new TextEncoder().encode(confirmMsg));
+          
+          // If session exists, recreate it with new credentials
+          if (session) {
+            console.log(`🔄 Recreating session with new credentials...`);
+            // Recreate session
+            const newLLM = initLLM(credentials.apiKey, credentials.apiSecret, credentials.wsUrl);
+            const newSession = new voice.AgentSession({
+              llm: newLLM,
+              turnHandling: { interruptions: true },
+            });
+            
+            await newSession.start({
+              agent: new MyAgent(),
+              room: ctx.room,
+            });
+            
+            session = newSession;
+            console.log(`✅ Session recreated with credentials`);
+          }
           return;
         }
         
         // Handle regular chat message
-        if (data.type === 'message' && data.text) {
-          console.log(`📩 Message from ${participant?.identity}:`, data.text);
+        if (data.type === 'message' && data.text && session) {
+          console.log(`📩 ${participant?.identity}: ${data.text}`);
           
-          // 🧠 Generate AI response
           const handle = session.generateReply({
             instructions: data.text,
           });
           
-          // 🔊 Wait until audio is fully played
           await handle.waitForPlayout();
-          console.log("🔊 Reply finished");
         }
         
-      } catch (error) {
-        console.error("❌ Error handling message:", error);
+      } catch (err) {
+        console.error("❌ Message error:", err);
       }
     });
 
-    // 👋 Auto greet when user joins
+    // Wait a moment for credentials to arrive from frontend
+    console.log(`⏳ Waiting for credentials from frontend...`);
+    
+    // Set timeout to wait for credentials (max 10 seconds)
+    const waitForCredentials = new Promise((resolve) => {
+      const checkInterval = setInterval(() => {
+        if (roomCredentials.has(roomName)) {
+          clearInterval(checkInterval);
+          resolve(roomCredentials.get(roomName));
+        }
+      }, 500);
+      
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        resolve(null);
+      }, 10000);
+    });
+    
+    const receivedCreds = await waitForCredentials;
+    
+    if (receivedCreds) {
+      console.log(`✅ Credentials received, initializing LLM...`);
+      llmInstance = initLLM(receivedCreds.apiKey, receivedCreds.apiSecret, receivedCreds.wsUrl);
+    } else {
+      console.log(`⚠️ No credentials received, using default configuration...`);
+      llmInstance = new google.realtime.RealtimeModel({
+        model: "gemini-2.0-flash-exp",
+        voice: "Puck",
+        apiKey: undefined,
+        temperature: 0.7,
+      });
+    }
+    
+    // 🎤 Create AI session
+    session = new voice.AgentSession({
+      llm: llmInstance,
+      turnHandling: {
+        interruptions: true,
+      },
+    });
+
+    // 🔗 Start session
+    await session.start({
+      agent: new MyAgent(),
+      room: ctx.room,
+    });
+
+    // 🔌 Connect to room
+    await ctx.connect();
+
+    console.log(`✅ Agent connected to room: ${roomName}`);
+
+    // 👋 Auto greeting
     setTimeout(async () => {
       try {
-        const greet = session.generateReply({
-          instructions: "Greet the user warmly. Say 'Hello! I'm your AI voice assistant. I'm ready to help you with anything you need. How can I assist you today?'",
-        });
-        await greet.waitForPlayout();
-      } catch (error) {
-        console.error("Greeting error:", error);
+        if (session) {
+          const greet = session.generateReply({
+            instructions: "Hey! I'm your AI voice assistant. How can I help you today?",
+          });
+          await greet.waitForPlayout();
+        }
+      } catch (err) {
+        console.error("Greeting error:", err);
       }
     }, 2000);
   },
 });
 
-// Custom Agent class
+// 🤖 Agent class
 class MyAgent {
   constructor() {
     console.log("🤖 Agent initialized");
   }
 }
 
-// 🧩 Run the agent worker
+// 🧩 Run agent
 cli.runApp(
   new ServerOptions({
     agent: fileURLToPath(import.meta.url),
