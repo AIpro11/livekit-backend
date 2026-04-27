@@ -1,89 +1,51 @@
-import {
-  defineAgent,
-  cli,
-  voice,
-  ServerOptions,
-} from '@livekit/agents';
+import { AccessToken } from 'livekit-server-sdk';
 
-import * as google from '@livekit/agents-plugin-google';
-import { fileURLToPath } from 'node:url';
-import dotenv from 'dotenv';
+export default async function handler(req, res) {
+  // Enable CORS for frontend requests
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-dotenv.config();
+  // Handle preflight OPTIONS request
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
-export default defineAgent({
-  entry: async (ctx) => {
-    const roomName = ctx.room.name;
+  // Only allow POST requests
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
-    console.log(`🚀 Joining room: ${roomName}`);
+  const { name, room, apiKey, apiSecret } = req.body;
 
-    // 🎤 Create AI session
-    const session = new voice.AgentSession({
-      llm: new google.realtime.RealtimeModel({
-        model: "gemini-2.0-flash-exp",
-        voice: "Puck",
-        temperature: 0.7,
-      }),
-      turnHandling: {
-        interruptions: true,
-      },
+  // Validate required fields
+  if (!name || !room) {
+    return res.status(400).json({ error: 'Missing name or room' });
+  }
+
+  if (!apiKey || !apiSecret) {
+    return res.status(400).json({ error: 'Missing LiveKit API Key or Secret' });
+  }
+
+  try {
+    const at = new AccessToken(apiKey, apiSecret, {
+      identity: name,
+      ttl: '1h',
     });
 
-    // 🔗 Start session
-    await session.start({
-      agent: new MyAgent(),
-      room: ctx.room,
+    at.addGrant({
+      roomJoin: true,
+      room: room,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
     });
 
-    // 🔌 Connect to room
-    await ctx.connect();
+    const token = await at.toJwt();
 
-    console.log(`✅ Agent connected to room: ${roomName}`);
-
-    // 👋 Greeting
-    setTimeout(async () => {
-      try {
-        const greet = session.generateReply({
-          instructions: "Hey! I'm your AI voice assistant. How can I help you today?",
-        });
-        await greet.waitForPlayout();
-      } catch (err) {
-        console.error("Greeting error:", err);
-      }
-    }, 2000);
-
-    // 📩 Listen for chat messages
-    ctx.room.on("dataReceived", async (payload, participant) => {
-      try {
-        const text = new TextDecoder().decode(payload);
-        const data = JSON.parse(text);
-
-        if (data.type === "message" && data.text) {
-          console.log(`📩 ${participant?.identity}: ${data.text}`);
-
-          const handle = session.generateReply({
-            instructions: data.text,
-          });
-
-          await handle.waitForPlayout();
-        }
-
-      } catch (err) {
-        console.error("❌ Message error:", err);
-      }
-    });
-  },
-});
-
-class MyAgent {
-  constructor() {
-    console.log("🤖 Agent initialized");
+    return res.status(200).json({ token });
+  } catch (error) {
+    console.error('Token generation error:', error);
+    return res.status(500).json({ error: 'Failed to generate token: ' + error.message });
   }
 }
-
-cli.runApp(
-  new ServerOptions({
-    agent: fileURLToPath(import.meta.url),
-    agentName: 'falcon-gpt-agent',
-  })
-);
