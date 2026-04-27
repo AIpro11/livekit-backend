@@ -3,14 +3,12 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node agent.js",
-    "dev": "node --watch agent.js"
+    "start": "node agent.js"
   },
   "dependencies": {
-    "@livekit/agents": "^1.0.0",
-    "@livekit/agents-plugin-google": "^1.0.0",
-    "@livekit/plugins-ai-coustics": "^1.0.0",
-    "dotenv": "^16.3.1",
-    "livekit-server-sdk": "^2.0.0"
+    "@livekit/agents": "latest",
+    "@livekit/agents-plugin-google": "latest",
+    "@livekit/plugins-ai-coustics": "latest",
+    "dotenv": "^16.3.1"
   }
 }
